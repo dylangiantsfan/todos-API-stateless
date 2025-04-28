@@ -2,7 +2,7 @@
 // A simple Express.js backend for a Todo list API
 
 const express = require('express');
-const fs = require('fs');
+const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const app = express();
 const PORT = 3000;
@@ -10,76 +10,76 @@ const PORT = 3000;
 // Middleware to parse JSON requests
 app.use(express.json());
 
-// TODO ➡️  Middleware to inlcude static content from 'public' folder
+
 app.use(express.static(path.join(__dirname, 'public')));
 
-// In-memory array to store todo items
-let todos = [];
-let nextId = 1;
+const db = new sqlite3.Database('./todos.db', (err) => {
+  if (err) console.error('Error opening database', err.message);
+});
 
-// TODO ➡️ serve index.html from 'public' at the '/' path
+db.run(`
+  CREATE TABLE IF NOT EXISTS todos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    priority TEXT DEFAULT 'low',
+    isComplete BOOLEAN DEFAULT 0,
+    isFun BOOLEAN DEFAULT 1
+  )
+`);
+
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-
-// TODO ➡️ GET all todo items at the '/todos' path
-
 app.get('/todos', (req, res) => {
-  res.json(todos);
+  db.all('SELECT * FROM todos', (err, rows) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    res.json(rows);
+  });
 });
 
-
-// GET a specific todo item by ID
 app.get('/todos/:id', (req, res) => {
   const id = parseInt(req.params.id);
-  const todo = todos.find(item => item.id === id);
-  if (todo) {
-    res.json(todo);
-  } else {
-    // TODO ➡️ handle 404 status with a message of { message: 'Todo item not found' }
-	res.status(404).json({ message: 'Todo item not found' });
-  }
+  db.get('SELECT * FROM todos WHERE id = ?', [id], (err, row) => {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+    if (!row) return res.status(404).json({ message: 'Todo item not found' });
+    res.json(row);
+  });
 });
 
 // POST a new todo item
 app.post('/todos', (req, res) => {
-  const { name, priority = 'low', isFun } = req.body;
+  const { name, priority = 'low', isFun = 1 } = req.body;
 
   if (!name) {
     return res.status(400).json({ message: 'Name is required' });
   }
 
-  const newTodo = {
-    id: nextId++,
-    name,
-    priority,
-    isComplete: false,
-    isFun
-  };
-  
-  todos.push(newTodo);
+  db.run(
+    'INSERT INTO todos (name, priority, isComplete, isFun) VALUES (?, ?, 0, ?)',
+    [name, priority, isFun],
+    function (err) {
+      if (err) return res.status(500).json({ message: 'Database error', error: err.message });
 
-  // TODO ➡️ Log every incoming TODO item in a 'todo.log' file @ the root of the project
-  // In your HW, you'd INSERT a row in your db table instead of writing to file or push to array!
-	const logEntry = `[${new Date().toISOString()}] ${JSON.stringify(newTodo)}\n`;
-	fs.appendFile('todo.log', logEntry, (err) => {
-		if (err) console.error('Error writing to log file:', err);
-  });
-  res.status(201).json(newTodo);
+      res.status(201).json({ id: this.lastID, name, priority, isComplete: false, isFun });
+    }
+  );
 });
+  
 
-// DELETE a todo item by ID
-app.delete('/todos/:id', (req, res) => {
+
+ app.delete('/todos/:id', (req, res) => {
   const id = parseInt(req.params.id);
-  const index = todos.findIndex(item => item.id === id);
 
-  if (index !== -1) {
-    todos.splice(index, 1);
-    res.json({ message: `Todo item ${id} deleted.` });
-  } else {
-    res.status(404).json({ message: 'Todo item not found' });
-  }
+  db.run('DELETE FROM todos WHERE id = ?', [id], function (err) {
+    if (err) return res.status(500).json({ message: 'Database error', error: err.message });
+
+    if (this.changes === 0) {
+      res.status(404).json({ message: 'Todo item not found' });
+    } else {
+      res.json({ message: `Todo item ${id} deleted.` });
+    }
+  });
 });
 // Start the server
 app.listen(PORT, () => {
